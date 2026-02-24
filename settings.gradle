@@ -1,0 +1,3 @@
+rootProject.name = 'crackhash-lab1'
+include 'manager', 'worker'
+

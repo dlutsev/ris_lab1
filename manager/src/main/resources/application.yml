@@ -1,0 +1,8 @@
+server:
+  port: 8080
+
+crackhash:
+  worker-count: 2
+  worker-base-urls: http://worker1:8080,http://worker2:8080
+  request-ttl-millis: 600000
+
