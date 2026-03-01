@@ -1,7 +1,7 @@
 package com.example.crackhash.manager.controller;
 
 import com.example.crackhash.manager.service.CrackHashService;
-import com.example.crackhash.manager.xml.CrackHashWorkerResponse;
+import com.example.crackhash.manager.dto.WorkerTaskResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,7 +16,7 @@ public class InternalManagerController {
     }
 
     @PatchMapping("/request")
-    public ResponseEntity<Void> handleWorkerResponse(@RequestBody CrackHashWorkerResponse response) {
+    public ResponseEntity<Void> handleWorkerResponse(@RequestBody WorkerTaskResponse response) {
         service.handleWorkerResponse(response);
         return ResponseEntity.ok().build();
     }

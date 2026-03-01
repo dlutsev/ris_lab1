@@ -1,6 +1,6 @@
 package com.example.crackhash.worker.service;
 
-import com.example.crackhash.worker.xml.CrackHashTaskRequest;
+import com.example.crackhash.worker.dto.WorkerTaskRequest;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -9,7 +9,7 @@ import java.util.List;
 @Service
 public class BruteforceService {
 
-    public List<String> findMatchingWords(CrackHashTaskRequest task) {
+    public List<String> findMatchingWords(WorkerTaskRequest task) {
         String alphabet = task.getAlphabet();
         int alphabetSize = alphabet.length();
         int maxLength = task.getMaxLength();

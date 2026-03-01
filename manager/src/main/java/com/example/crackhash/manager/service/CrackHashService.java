@@ -4,8 +4,8 @@ import com.example.crackhash.manager.api.CrackHashRequestDto;
 import com.example.crackhash.manager.api.CrackHashStatusResponseDto;
 import com.example.crackhash.manager.model.CrackHashRequestInfo;
 import com.example.crackhash.manager.model.RequestStatus;
-import com.example.crackhash.manager.xml.CrackHashTaskRequest;
-import com.example.crackhash.manager.xml.CrackHashWorkerResponse;
+import com.example.crackhash.manager.dto.WorkerTaskRequest;
+import com.example.crackhash.manager.dto.WorkerTaskResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -62,7 +62,7 @@ public class CrackHashService {
     }
 
     private void sendTaskToWorker(CrackHashRequestInfo info, int partNumber) {
-        CrackHashTaskRequest taskRequest = new CrackHashTaskRequest(
+        WorkerTaskRequest taskRequest = new WorkerTaskRequest(
                 info.getRequestId(),
                 info.getHash(),
                 ALPHABET,
@@ -72,8 +72,8 @@ public class CrackHashService {
         );
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_XML);
-        HttpEntity<CrackHashTaskRequest> entity = new HttpEntity<>(taskRequest, headers);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<WorkerTaskRequest> entity = new HttpEntity<>(taskRequest, headers);
 
         String baseUrl = workerBaseUrls.get(partNumber % workerBaseUrls.size());
         String url = baseUrl + "/internal/api/worker/hash/crack/task";
@@ -85,7 +85,7 @@ public class CrackHashService {
         }
     }
 
-    public void handleWorkerResponse(CrackHashWorkerResponse response) {
+    public void handleWorkerResponse(WorkerTaskResponse response) {
         CrackHashRequestInfo info = requests.get(response.getRequestId());
         if (info == null) {
             return;

@@ -1,12 +1,9 @@
 package com.example.crackhash.worker.controller;
 
 import com.example.crackhash.worker.service.BruteforceService;
-import com.example.crackhash.worker.xml.CrackHashTaskRequest;
-import com.example.crackhash.worker.xml.CrackHashWorkerResponse;
+import com.example.crackhash.worker.dto.WorkerTaskRequest;
+import com.example.crackhash.worker.dto.WorkerTaskResponse;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
@@ -30,20 +27,16 @@ public class WorkerController {
     }
 
     @PostMapping("/task")
-    public ResponseEntity<Void> handleTask(@RequestBody CrackHashTaskRequest taskRequest) {
+    public ResponseEntity<Void> handleTask(@RequestBody WorkerTaskRequest taskRequest) {
         List<String> answers = bruteforceService.findMatchingWords(taskRequest);
 
-        CrackHashWorkerResponse response = new CrackHashWorkerResponse();
+        WorkerTaskResponse response = new WorkerTaskResponse();
         response.setRequestId(taskRequest.getRequestId());
         response.setPartNumber(taskRequest.getPartNumber());
         response.setPartCount(taskRequest.getPartCount());
         response.setAnswers(answers);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_XML);
-        HttpEntity<CrackHashWorkerResponse> entity = new HttpEntity<>(response, headers);
-
-        restTemplate.patchForObject(managerCallbackUrl, entity, Void.class);
+        restTemplate.patchForObject(managerCallbackUrl, response, Void.class);
 
         return ResponseEntity.ok().build();
     }
