@@ -1,8 +1,5 @@
 package com.example.crackhash.manager.dto;
 
-/**
- * JSON body for POST /internal/api/worker/hash/crack/task (manager → worker).
- */
 public class WorkerTaskRequest {
 
     private String requestId;

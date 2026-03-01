@@ -20,9 +20,7 @@ import java.util.concurrent.Executor;
 
 @Service
 public class CrackHashService {
-
     private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-
     private final RestTemplate restTemplate;
     private final Executor executor;
     private final Map<String, CrackHashRequestInfo> requests = new ConcurrentHashMap<>();

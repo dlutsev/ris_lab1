@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class CrackHashRequestInfo {
-
     private final String requestId;
     private final String hash;
     private final int maxLength;

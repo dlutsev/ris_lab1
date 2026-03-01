@@ -3,9 +3,6 @@ package com.example.crackhash.worker.dto;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * JSON body for PATCH /internal/api/manager/hash/crack/request (worker → manager).
- */
 public class WorkerTaskResponse {
 
     private String requestId;
