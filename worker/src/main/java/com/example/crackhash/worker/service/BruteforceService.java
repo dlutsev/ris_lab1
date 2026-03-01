@@ -1,6 +1,8 @@
 package com.example.crackhash.worker.service;
 
-import com.example.crackhash.worker.dto.WorkerTaskRequest;
+import com.example.crackhash.common.dto.WorkerTaskRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -8,6 +10,8 @@ import java.util.List;
 
 @Service
 public class BruteforceService {
+
+    private static final Logger log = LoggerFactory.getLogger(BruteforceService.class);
 
     public List<String> findMatchingWords(WorkerTaskRequest task) {
         String alphabet = task.getAlphabet();
@@ -28,8 +32,12 @@ public class BruteforceService {
         long from = total * partNumber / partCount;
         long to = total * (partNumber + 1L) / partCount - 1L;
         if (from > to) {
+            log.info("Request [{}] part {}/{}: empty range (total={})", task.getRequestId(), partNumber, partCount, total);
             return new ArrayList<>();
         }
+
+        long rangeSize = to - from + 1;
+        log.info("Request [{}] part {}/{}: totalSpace={}, range=[{}, {}], rangeSize={}", task.getRequestId(), partNumber, partCount, total, from, to, rangeSize);
 
         List<String> answers = new ArrayList<>();
         String targetHash = task.getHash().toLowerCase();
@@ -52,6 +60,7 @@ public class BruteforceService {
             String hash = Md5Utils.md5Hex(word);
             if (hash.equals(targetHash)) {
                 answers.add(word);
+                log.info("Request [{}] part {}/{}: found match '{}' at globalIndex={}", task.getRequestId(), partNumber, partCount, word, globalIndex);
                 break;
             }
         }

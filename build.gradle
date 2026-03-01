@@ -24,21 +24,21 @@ allprojects {
     }
 }
 
-subprojects {
+subprojects { subproject ->
     apply plugin: 'java'
-    apply plugin: 'org.springframework.boot'
-    apply plugin: 'io.spring.dependency-management'
-
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
 
+    if (subproject.name == 'common') {
+        return
+    }
+
+    apply plugin: 'org.springframework.boot'
+    apply plugin: 'io.spring.dependency-management'
     dependencies {
         testImplementation 'org.springframework.boot:spring-boot-starter-test'
     }
-
-    test {
-        useJUnitPlatform()
-    }
+    tasks.named('test', Test) { useJUnitPlatform() }
 }
 
 

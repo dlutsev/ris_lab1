@@ -4,8 +4,10 @@ import com.example.crackhash.manager.api.CrackHashRequestDto;
 import com.example.crackhash.manager.api.CrackHashStatusResponseDto;
 import com.example.crackhash.manager.model.CrackHashRequestInfo;
 import com.example.crackhash.manager.model.RequestStatus;
-import com.example.crackhash.manager.dto.WorkerTaskRequest;
-import com.example.crackhash.manager.dto.WorkerTaskResponse;
+import com.example.crackhash.common.dto.WorkerTaskRequest;
+import com.example.crackhash.common.dto.WorkerTaskResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -20,6 +22,8 @@ import java.util.concurrent.Executor;
 
 @Service
 public class CrackHashService {
+
+    private static final Logger log = LoggerFactory.getLogger(CrackHashService.class);
     private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
     private final RestTemplate restTemplate;
     private final Executor executor;
@@ -50,6 +54,7 @@ public class CrackHashService {
                 workerCount
         );
         requests.put(requestId, info);
+        log.info("Request [{}] registered, splitting into {} parts, workers={}", requestId, workerCount, workerBaseUrls);
 
         for (int part = 0; part < workerCount; part++) {
             int partNumber = part;
@@ -75,10 +80,12 @@ public class CrackHashService {
 
         String baseUrl = workerBaseUrls.get(partNumber % workerBaseUrls.size());
         String url = baseUrl + "/internal/api/worker/hash/crack/task";
+        log.info("Request [{}] sending part {}/{} to worker {}", info.getRequestId(), partNumber, info.getPartCount(), baseUrl);
 
         try {
             restTemplate.postForEntity(url, entity, Void.class);
         } catch (Exception ex) {
+            log.error("Request [{}] part {}/{} failed to send to {}: {}", info.getRequestId(), partNumber, info.getPartCount(), baseUrl, ex.getMessage());
             info.setStatus(RequestStatus.ERROR);
         }
     }
@@ -96,6 +103,8 @@ public class CrackHashService {
 
         info.addAnswers(response.getAnswers());
         int completed = info.incrementCompletedParts();
+        log.info("Request [{}] worker response: part {}/{}, answers={}, completedParts={}/{}",
+                response.getRequestId(), response.getPartNumber(), response.getPartCount(), response.getAnswers(), completed, info.getPartCount());
 
         if (completed >= info.getPartCount() && info.getStatus() == RequestStatus.IN_PROGRESS) {
             info.setStatus(RequestStatus.READY);

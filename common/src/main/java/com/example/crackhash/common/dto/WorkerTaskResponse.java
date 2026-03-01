@@ -1,8 +1,11 @@
-package com.example.crackhash.worker.dto;
+package com.example.crackhash.common.dto;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * JSON body: worker → manager (PATCH /internal/api/manager/hash/crack/request).
+ */
 public class WorkerTaskResponse {
 
     private String requestId;
