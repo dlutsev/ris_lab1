@@ -13,6 +13,7 @@ public class CrackHashRequestInfo {
     private final int partCount;
     private final long createdAtMillis;
     private final AtomicInteger completedParts = new AtomicInteger(0);
+    private final AtomicInteger failedParts = new AtomicInteger(0);
     private final List<String> answers = Collections.synchronizedList(new ArrayList<>());
     private volatile RequestStatus status = RequestStatus.IN_PROGRESS;
 
@@ -64,5 +65,17 @@ public class CrackHashRequestInfo {
 
     public int incrementCompletedParts() {
         return completedParts.incrementAndGet();
+    }
+
+    public int getCompletedParts() {
+        return completedParts.get();
+    }
+
+    public int incrementFailedParts() {
+        return failedParts.incrementAndGet();
+    }
+
+    public int getFailedParts() {
+        return failedParts.get();
     }
 }
