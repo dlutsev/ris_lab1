@@ -61,7 +61,6 @@ public class BruteforceService {
             if (hash.equals(targetHash)) {
                 answers.add(word);
                 log.info("Request [{}] part {}/{}: found match '{}' at globalIndex={}", task.getRequestId(), partNumber, partCount, word, globalIndex);
-                break;
             }
         }
 

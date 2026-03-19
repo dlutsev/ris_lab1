@@ -85,7 +85,7 @@ public class CrackHashService {
                     dto.getMaxLength(),
                     0
             );
-            if ("READY".equals(cached.getStatus()) || "PARTIAL_RESULT".equals(cached.getStatus())) {
+            if ("READY".equals(cached.getStatus())) {
                 if (cached.getData() != null) {
                     cachedInfo.addAnswers(cached.getData());
                 }
@@ -217,14 +217,16 @@ public class CrackHashService {
     }
 
     private void finishRequest(CrackHashRequestInfo info) {
+        if (info.getStatus() == RequestStatus.READY) {
+            cache.put(cacheKey(info.getHash(), info.getMaxLength()),
+                    new CrackHashStatusResponseDto(info.getStatus().name(), new ArrayList<>(info.getAnswers())));
+        }
+
         CrackHashRequestInfo nextToStart = null;
         int active;
         int queueSize;
         synchronized (schedulingLock) {
             activeRequests = Math.max(0, activeRequests - 1);
-
-            // IMPORTANT: while dequeuing, re-check cache.
-            // If request was queued earlier and now result is cached, we should complete it without worker calls.
             while (true) {
                 CrackHashRequestInfo next = pendingQueue.poll();
                 if (next == null) {
@@ -232,13 +234,12 @@ public class CrackHashService {
                 }
 
                 CrackHashStatusResponseDto cached = cache.get(cacheKey(next.getHash(), next.getMaxLength()));
-                if (cached != null && ("READY".equals(cached.getStatus()) || "PARTIAL_RESULT".equals(cached.getStatus()))) {
+                if (cached != null && ("READY".equals(cached.getStatus()))) {
                     if (cached.getData() != null) {
                         next.addAnswers(cached.getData());
                     }
                     next.setStatus(RequestStatus.valueOf(cached.getStatus()));
                     log.info("Dequeued request [{}] served from cache, status={}", next.getRequestId(), next.getStatus());
-                    // do not start workers for it; continue draining queue
                     continue;
                 }
 
@@ -253,11 +254,6 @@ public class CrackHashService {
 
         log.info("Request [{}] finished with status {} (active={}/{}, queueSize={}/{})",
                 info.getRequestId(), info.getStatus(), active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
-
-        if (info.getStatus() == RequestStatus.READY || info.getStatus() == RequestStatus.PARTIAL_RESULT) {
-            cache.put(cacheKey(info.getHash(), info.getMaxLength()),
-                    new CrackHashStatusResponseDto(info.getStatus().name(), new ArrayList<>(info.getAnswers())));
-        }
 
         if (nextToStart != null) {
             log.info("Dequeued request [{}] for processing (active={}/{}, queueSize={}/{})",
