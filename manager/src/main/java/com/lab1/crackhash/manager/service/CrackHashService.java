@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -47,6 +48,7 @@ public class CrackHashService {
     private final int cacheCapacity;
     private final Object schedulingLock = new Object();
     private int activeRequests = 0;
+    private CrackHashRequestInfo activeRequest = null;
     private final Deque<CrackHashRequestInfo> pendingQueue = new ArrayDeque<>();
     private final Map<String, CrackHashStatusResponseDto> cache;
 
@@ -132,6 +134,9 @@ public class CrackHashService {
         if (shouldStartNow) {
             log.info("Request [{}] started (active={}/{}, queueSize={}/{})",
                     requestId, active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
+            synchronized (schedulingLock) {
+                activeRequest = info;
+            }
             startProcessing(info);
         } else {
             log.info("Request [{}] queued (active={}/{}, queueSize={}/{})",
@@ -202,7 +207,7 @@ public class CrackHashService {
         }
 
         if (info.getStatus() == RequestStatus.IN_PROGRESS && isExpired(info)) {
-            info.setStatus(RequestStatus.ERROR);
+            forceExpire(info, "status_poll");
         }
 
         if (info.getStatus() == RequestStatus.IN_PROGRESS) {
@@ -217,7 +222,7 @@ public class CrackHashService {
     }
 
     private void finishRequest(CrackHashRequestInfo info) {
-        if (info.getStatus() == RequestStatus.READY) {
+        if (info.getStatus() == RequestStatus.READY || info.getStatus() == RequestStatus.PARTIAL_RESULT) {
             cache.put(cacheKey(info.getHash(), info.getMaxLength()),
                     new CrackHashStatusResponseDto(info.getStatus().name(), new ArrayList<>(info.getAnswers())));
         }
@@ -227,6 +232,9 @@ public class CrackHashService {
         int queueSize;
         synchronized (schedulingLock) {
             activeRequests = Math.max(0, activeRequests - 1);
+            if (activeRequest == info) {
+                activeRequest = null;
+            }
             while (true) {
                 CrackHashRequestInfo next = pendingQueue.poll();
                 if (next == null) {
@@ -234,7 +242,7 @@ public class CrackHashService {
                 }
 
                 CrackHashStatusResponseDto cached = cache.get(cacheKey(next.getHash(), next.getMaxLength()));
-                if (cached != null && ("READY".equals(cached.getStatus()))) {
+                if (cached != null && ("READY".equals(cached.getStatus()) || "PARTIAL_RESULT".equals(cached.getStatus()))) {
                     if (cached.getData() != null) {
                         next.addAnswers(cached.getData());
                     }
@@ -245,6 +253,7 @@ public class CrackHashService {
 
                 nextToStart = next;
                 activeRequests++;
+                activeRequest = nextToStart;
                 break;
             }
 
@@ -259,6 +268,32 @@ public class CrackHashService {
             log.info("Dequeued request [{}] for processing (active={}/{}, queueSize={}/{})",
                     nextToStart.getRequestId(), active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
             startProcessing(nextToStart);
+        }
+    }
+
+    @Scheduled(fixedDelay = 1000)
+    public void timeoutSweep() {
+        CrackHashRequestInfo active;
+        List<CrackHashRequestInfo> expiredQueued = new ArrayList<>();
+
+        synchronized (schedulingLock) {
+            active = activeRequest;
+            for (var it = pendingQueue.iterator(); it.hasNext(); ) {
+                CrackHashRequestInfo queued = it.next();
+                if (queued.getStatus() == RequestStatus.IN_PROGRESS && isExpired(queued)) {
+                    it.remove();
+                    queued.setStatus(RequestStatus.ERROR);
+                    expiredQueued.add(queued);
+                }
+            }
+        }
+
+        for (CrackHashRequestInfo queued : expiredQueued) {
+            log.warn("Request [{}] expired while queued -> ERROR", queued.getRequestId());
+        }
+
+        if (active != null && active.getStatus() == RequestStatus.IN_PROGRESS && isExpired(active)) {
+            forceExpire(active, "timeout_sweep");
         }
     }
 
@@ -308,6 +343,44 @@ public class CrackHashService {
             shouldFinish = true;
         }
 
+        if (shouldFinish) {
+            finishRequest(info);
+        }
+    }
+
+    private void forceExpire(CrackHashRequestInfo info, String source) {
+        // If request is still queued, just remove from queue and mark ERROR.
+        boolean removedFromQueue = false;
+        synchronized (schedulingLock) {
+            for (var it = pendingQueue.iterator(); it.hasNext(); ) {
+                if (it.next() == info) {
+                    it.remove();
+                    removedFromQueue = true;
+                    break;
+                }
+            }
+        }
+
+        if (removedFromQueue) {
+            synchronized (info) {
+                if (info.getStatus() == RequestStatus.IN_PROGRESS) {
+                    info.setStatus(RequestStatus.ERROR);
+                }
+            }
+            log.warn("Request [{}] expired by {} while queued -> ERROR", info.getRequestId(), source);
+            return;
+        }
+
+        // Otherwise treat as active and finish to free the slot.
+        boolean shouldFinish = false;
+        synchronized (info) {
+            if (info.getStatus() != RequestStatus.IN_PROGRESS) {
+                return;
+            }
+            info.setStatus(RequestStatus.ERROR);
+            shouldFinish = true;
+        }
+        log.warn("Request [{}] expired by {} while active -> ERROR (finishing)", info.getRequestId(), source);
         if (shouldFinish) {
             finishRequest(info);
         }
