@@ -45,7 +45,6 @@ public class WorkerController {
 
         log.info("Task [{}] part {}/{} finished, answers={}, sending to manager", taskRequest.getRequestId(), taskRequest.getPartNumber(), taskRequest.getPartCount(), answers);
         restTemplate.patchForObject(managerCallbackUrl, response, Void.class);
-
         return ResponseEntity.ok().build();
     }
 }

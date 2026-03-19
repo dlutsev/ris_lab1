@@ -5,8 +5,6 @@ services:
     build:
       context: .
       dockerfile: manager/Dockerfile
-    environment:
-      - CRACKHASH_REQUEST_TTL_MILLIS=30000
     ports:
       - "8080:8080"
 

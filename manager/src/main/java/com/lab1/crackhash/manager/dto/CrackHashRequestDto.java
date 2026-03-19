@@ -1,4 +1,4 @@
-package com.lab1.crackhash.manager.api;
+package com.lab1.crackhash.manager.dto;
 
 public class CrackHashRequestDto {
     private String hash;

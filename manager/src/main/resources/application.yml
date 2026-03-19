@@ -8,4 +8,3 @@ crackhash:
   alphabet: abcdefghijklmnopqrstuvwxyz0123456789
   queue-capacity: 100
   cache-capacity: 100
-

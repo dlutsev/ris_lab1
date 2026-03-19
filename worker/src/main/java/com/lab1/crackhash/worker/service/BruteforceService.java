@@ -28,7 +28,6 @@ public class BruteforceService {
 
         int partCount = task.getPartCount();
         int partNumber = task.getPartNumber();
-
         long from = total * partNumber / partCount;
         long to = total * (partNumber + 1L) / partCount - 1L;
         if (from > to) {
@@ -55,7 +54,6 @@ public class BruteforceService {
                 }
                 offset += block;
             }
-
             String word = indexToWord(idx, len, alphabet, alphabetSize);
             String hash = Md5Utils.md5Hex(word);
             if (hash.equals(targetHash)) {
@@ -63,7 +61,6 @@ public class BruteforceService {
                 log.info("Request [{}] part {}/{}: found match '{}' at globalIndex={}", task.getRequestId(), partNumber, partCount, word, globalIndex);
             }
         }
-
         return answers;
     }
 

@@ -1,8 +1,8 @@
 package com.lab1.crackhash.manager.controller;
 
-import com.lab1.crackhash.manager.api.CrackHashRequestDto;
-import com.lab1.crackhash.manager.api.CrackHashResponseDto;
-import com.lab1.crackhash.manager.api.CrackHashStatusResponseDto;
+import com.lab1.crackhash.manager.dto.CrackHashRequestDto;
+import com.lab1.crackhash.manager.dto.CrackHashResponseDto;
+import com.lab1.crackhash.manager.dto.CrackHashStatusResponseDto;
 import com.lab1.crackhash.manager.service.CrackHashService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

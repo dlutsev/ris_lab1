@@ -2,8 +2,8 @@ package com.lab1.crackhash.manager.service;
 
 import com.lab1.crackhash.common.dto.WorkerTaskRequest;
 import com.lab1.crackhash.common.dto.WorkerTaskResponse;
-import com.lab1.crackhash.manager.api.CrackHashRequestDto;
-import com.lab1.crackhash.manager.api.CrackHashStatusResponseDto;
+import com.lab1.crackhash.manager.dto.CrackHashRequestDto;
+import com.lab1.crackhash.manager.dto.CrackHashStatusResponseDto;
 import com.lab1.crackhash.manager.model.CrackHashRequestInfo;
 import com.lab1.crackhash.manager.model.RequestStatus;
 import org.slf4j.Logger;
@@ -27,7 +27,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class CrackHashService {
