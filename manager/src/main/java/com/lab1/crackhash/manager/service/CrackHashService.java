@@ -32,24 +32,27 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class CrackHashService {
 
     private static final Logger log = LoggerFactory.getLogger(CrackHashService.class);
-    private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+    private static final int MAX_CONCURRENT_REQUESTS = 1;
 
     private final RestTemplate restTemplate;
     private final Executor executor;
     private final Map<String, CrackHashRequestInfo> requests = new ConcurrentHashMap<>();
 
+    private final String alphabet;
     private final int workerCount;
     private final List<String> workerBaseUrls;
     private final long requestTtlMillis;
 
     private final int queueCapacity;
     private final int cacheCapacity;
-    private final AtomicInteger activeRequests = new AtomicInteger(0);
+    private final Object schedulingLock = new Object();
+    private int activeRequests = 0;
     private final Deque<CrackHashRequestInfo> pendingQueue = new ArrayDeque<>();
     private final Map<String, CrackHashStatusResponseDto> cache;
 
     public CrackHashService(RestTemplate restTemplate,
                             Executor workerTasksExecutor,
+                            @Value("${crackhash.alphabet:abcdefghijklmnopqrstuvwxyz0123456789}") String alphabet,
                             @Value("${crackhash.worker-count}") int workerCount,
                             @Value("${crackhash.worker-base-urls}") String workerBaseUrls,
                             @Value("${crackhash.request-ttl-millis}") long requestTtlMillis,
@@ -57,6 +60,7 @@ public class CrackHashService {
                             @Value("${crackhash.cache-capacity:100}") int cacheCapacity) {
         this.restTemplate = restTemplate;
         this.executor = workerTasksExecutor;
+        this.alphabet = alphabet;
         this.workerCount = workerCount;
         this.workerBaseUrls = parseWorkerBaseUrls(workerBaseUrls);
         this.requestTtlMillis = requestTtlMillis;
@@ -103,19 +107,35 @@ public class CrackHashService {
         );
         requests.put(requestId, info);
 
-        int currentActive = activeRequests.get();
-        if (currentActive < queueCapacity) {
-            activeRequests.incrementAndGet();
-            log.info("Request [{}] registered and started immediately, active={}, queueSize={}, workers={}",
-                    requestId, activeRequests.get(), pendingQueue.size(), workerBaseUrls);
+        boolean shouldStartNow = false;
+        int queueSize;
+        int active;
+        synchronized (schedulingLock) {
+            if (activeRequests < MAX_CONCURRENT_REQUESTS) {
+                activeRequests++;
+                shouldStartNow = true;
+            } else if (pendingQueue.size() < queueCapacity) {
+                pendingQueue.offer(info);
+            } else {
+                info.setStatus(RequestStatus.ERROR);
+            }
+            queueSize = pendingQueue.size();
+            active = activeRequests;
+        }
+
+        if (info.getStatus() == RequestStatus.ERROR) {
+            log.warn("Request [{}] rejected: scheduler full (active={}/{}, queueSize={}/{})",
+                    requestId, active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
+            return requestId;
+        }
+
+        if (shouldStartNow) {
+            log.info("Request [{}] started (active={}/{}, queueSize={}/{})",
+                    requestId, active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
             startProcessing(info);
-        } else if (pendingQueue.size() < queueCapacity) {
-            pendingQueue.offer(info);
-            log.info("Request [{}] queued, active={}, queueSize={}", requestId, activeRequests.get(), pendingQueue.size());
         } else {
-            log.warn("Request [{}] rejected: queue and active slots are full (active={}, queueSize={})",
-                    requestId, activeRequests.get(), pendingQueue.size());
-            info.setStatus(RequestStatus.ERROR);
+            log.info("Request [{}] queued (active={}/{}, queueSize={}/{})",
+                    requestId, active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
         }
 
         return requestId;
@@ -134,7 +154,7 @@ public class CrackHashService {
         WorkerTaskRequest taskRequest = new WorkerTaskRequest(
                 info.getRequestId(),
                 info.getHash(),
-                ALPHABET,
+                alphabet,
                 info.getMaxLength(),
                 partNumber,
                 info.getPartCount()
@@ -153,6 +173,7 @@ public class CrackHashService {
         } catch (Exception ex) {
             log.error("Request [{}] part {}/{} failed to send to {}: {}", info.getRequestId(), partNumber, info.getPartCount(), baseUrl, ex.getMessage());
             info.incrementFailedParts();
+            tryFinalizeIfDone(info);
         }
     }
 
@@ -171,18 +192,7 @@ public class CrackHashService {
         int completed = info.incrementCompletedParts();
         log.info("Request [{}] worker response: part {}/{}, answers={}, completedParts={}/{}",
                 response.getRequestId(), response.getPartNumber(), response.getPartCount(), response.getAnswers(), completed, info.getPartCount());
-
-        int failed = info.getFailedParts();
-        if (completed + failed >= info.getPartCount() && info.getStatus() == RequestStatus.IN_PROGRESS) {
-            if (!info.getAnswers().isEmpty() && failed > 0) {
-                info.setStatus(RequestStatus.PARTIAL_RESULT);
-            } else if (!info.getAnswers().isEmpty()) {
-                info.setStatus(RequestStatus.READY);
-            } else {
-                info.setStatus(RequestStatus.ERROR);
-            }
-            finishRequest(info);
-        }
+        tryFinalizeIfDone(info);
     }
 
     public CrackHashStatusResponseDto getStatus(String requestId) {
@@ -207,21 +217,52 @@ public class CrackHashService {
     }
 
     private void finishRequest(CrackHashRequestInfo info) {
-        int active = activeRequests.decrementAndGet();
-        log.info("Request [{}] finished with status {}, active={}, queueSize={}",
-                info.getRequestId(), info.getStatus(), active, pendingQueue.size());
+        CrackHashRequestInfo nextToStart = null;
+        int active;
+        int queueSize;
+        synchronized (schedulingLock) {
+            activeRequests = Math.max(0, activeRequests - 1);
 
-        if (info.getStatus() == RequestStatus.READY) {
+            // IMPORTANT: while dequeuing, re-check cache.
+            // If request was queued earlier and now result is cached, we should complete it without worker calls.
+            while (true) {
+                CrackHashRequestInfo next = pendingQueue.poll();
+                if (next == null) {
+                    break;
+                }
+
+                CrackHashStatusResponseDto cached = cache.get(cacheKey(next.getHash(), next.getMaxLength()));
+                if (cached != null && ("READY".equals(cached.getStatus()) || "PARTIAL_RESULT".equals(cached.getStatus()))) {
+                    if (cached.getData() != null) {
+                        next.addAnswers(cached.getData());
+                    }
+                    next.setStatus(RequestStatus.valueOf(cached.getStatus()));
+                    log.info("Dequeued request [{}] served from cache, status={}", next.getRequestId(), next.getStatus());
+                    // do not start workers for it; continue draining queue
+                    continue;
+                }
+
+                nextToStart = next;
+                activeRequests++;
+                break;
+            }
+
+            active = activeRequests;
+            queueSize = pendingQueue.size();
+        }
+
+        log.info("Request [{}] finished with status {} (active={}/{}, queueSize={}/{})",
+                info.getRequestId(), info.getStatus(), active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
+
+        if (info.getStatus() == RequestStatus.READY || info.getStatus() == RequestStatus.PARTIAL_RESULT) {
             cache.put(cacheKey(info.getHash(), info.getMaxLength()),
                     new CrackHashStatusResponseDto(info.getStatus().name(), new ArrayList<>(info.getAnswers())));
         }
 
-        CrackHashRequestInfo next = pendingQueue.poll();
-        if (next != null) {
-            activeRequests.incrementAndGet();
-            log.info("Dequeued request [{}] for processing, active={}, queueSize={}",
-                    next.getRequestId(), activeRequests.get(), pendingQueue.size());
-            startProcessing(next);
+        if (nextToStart != null) {
+            log.info("Dequeued request [{}] for processing (active={}/{}, queueSize={}/{})",
+                    nextToStart.getRequestId(), active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
+            startProcessing(nextToStart);
         }
     }
 
@@ -247,5 +288,32 @@ public class CrackHashService {
 
     private String cacheKey(String hash, int maxLength) {
         return (hash != null ? hash.toLowerCase() : "null") + "|" + maxLength;
+    }
+
+    private void tryFinalizeIfDone(CrackHashRequestInfo info) {
+        boolean shouldFinish = false;
+        synchronized (info) {
+            if (info.getStatus() != RequestStatus.IN_PROGRESS) {
+                return;
+            }
+            int completed = info.getCompletedParts();
+            int failed = info.getFailedParts();
+            if (completed + failed < info.getPartCount()) {
+                return;
+            }
+
+            if (!info.getAnswers().isEmpty() && failed > 0) {
+                info.setStatus(RequestStatus.PARTIAL_RESULT);
+            } else if (!info.getAnswers().isEmpty()) {
+                info.setStatus(RequestStatus.READY);
+            } else {
+                info.setStatus(RequestStatus.ERROR);
+            }
+            shouldFinish = true;
+        }
+
+        if (shouldFinish) {
+            finishRequest(info);
+        }
     }
 }
