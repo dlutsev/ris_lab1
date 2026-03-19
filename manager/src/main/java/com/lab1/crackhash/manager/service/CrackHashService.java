@@ -30,19 +30,15 @@ import java.util.concurrent.Executor;
 
 @Service
 public class CrackHashService {
-
     private static final Logger log = LoggerFactory.getLogger(CrackHashService.class);
     private static final int MAX_CONCURRENT_REQUESTS = 1;
-
     private final RestTemplate restTemplate;
     private final Executor executor;
     private final Map<String, CrackHashRequestInfo> requests = new ConcurrentHashMap<>();
-
     private final String alphabet;
     private final int workerCount;
     private final List<String> workerBaseUrls;
     private final long requestTtlMillis;
-
     private final int queueCapacity;
     private final int cacheCapacity;
     private final Object schedulingLock = new Object();
@@ -221,11 +217,10 @@ public class CrackHashService {
     }
 
     private void finishRequest(CrackHashRequestInfo info) {
-        if (info.getStatus() == RequestStatus.READY || info.getStatus() == RequestStatus.PARTIAL_RESULT) {
+        if (info.getStatus() == RequestStatus.READY) {
             cache.put(cacheKey(info.getHash(), info.getMaxLength()),
                     new CrackHashStatusResponseDto(info.getStatus().name(), new ArrayList<>(info.getAnswers())));
         }
-
         CrackHashRequestInfo nextToStart = null;
         int active;
         int queueSize;
@@ -241,7 +236,7 @@ public class CrackHashService {
                 }
 
                 CrackHashStatusResponseDto cached = cache.get(cacheKey(next.getHash(), next.getMaxLength()));
-                if (cached != null && ("READY".equals(cached.getStatus()) || "PARTIAL_RESULT".equals(cached.getStatus()))) {
+                if (cached != null && ("READY".equals(cached.getStatus()))) {
                     if (cached.getData() != null) {
                         next.addAnswers(cached.getData());
                     }
@@ -249,13 +244,11 @@ public class CrackHashService {
                     log.info("Dequeued request [{}] served from cache, status={}", next.getRequestId(), next.getStatus());
                     continue;
                 }
-
                 nextToStart = next;
                 activeRequests++;
                 activeRequest = nextToStart;
                 break;
             }
-
             active = activeRequests;
             queueSize = pendingQueue.size();
         }
@@ -348,7 +341,6 @@ public class CrackHashService {
     }
 
     private void forceExpire(CrackHashRequestInfo info, String source) {
-        // If request is still queued, just remove from queue and mark ERROR.
         boolean removedFromQueue = false;
         synchronized (schedulingLock) {
             for (var it = pendingQueue.iterator(); it.hasNext(); ) {
@@ -369,8 +361,6 @@ public class CrackHashService {
             log.warn("Request [{}] expired by {} while queued -> ERROR", info.getRequestId(), source);
             return;
         }
-
-        // Otherwise treat as active and finish to free the slot.
         boolean shouldFinish = false;
         synchronized (info) {
             if (info.getStatus() != RequestStatus.IN_PROGRESS) {
