@@ -24,7 +24,6 @@ public class PublicHashController {
     public ResponseEntity<CrackHashResponseDto> crack(@RequestBody CrackHashRequestDto dto) {
         log.info("Crack request received: hash={}, maxLength={}", dto.getHash(), dto.getMaxLength());
         String requestId = service.createCrackRequest(dto);
-        log.info("Crack request created: requestId={}", requestId);
         return ResponseEntity.ok(new CrackHashResponseDto(requestId));
     }
 

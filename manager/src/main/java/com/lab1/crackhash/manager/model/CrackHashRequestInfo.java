@@ -11,7 +11,7 @@ public class CrackHashRequestInfo {
     private final String hash;
     private final int maxLength;
     private final int partCount;
-    private final long createdAtMillis;
+    private volatile long processingStartedAtMillis = 0;
     private final AtomicInteger completedParts = new AtomicInteger(0);
     private final AtomicInteger failedParts = new AtomicInteger(0);
     private final List<String> answers = Collections.synchronizedList(new ArrayList<>());
@@ -22,7 +22,6 @@ public class CrackHashRequestInfo {
         this.hash = hash;
         this.maxLength = maxLength;
         this.partCount = partCount;
-        this.createdAtMillis = Instant.now().toEpochMilli();
     }
 
     public String getRequestId() {
@@ -41,8 +40,14 @@ public class CrackHashRequestInfo {
         return partCount;
     }
 
-    public long getCreatedAtMillis() {
-        return createdAtMillis;
+    public void markProcessingStarted() {
+        if (processingStartedAtMillis == 0) {
+            processingStartedAtMillis = Instant.now().toEpochMilli();
+        }
+    }
+
+    public long getProcessingStartedAtMillis() {
+        return processingStartedAtMillis;
     }
 
     public RequestStatus getStatus() {
