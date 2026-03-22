@@ -78,8 +78,7 @@ public class CrackHashService {
         CrackHashStatusResponseDto cached = cache.get(cacheKey);
         if (cached != null) {
             String cachedRequestId = UUID.randomUUID().toString();
-            CrackHashStatusResponseDto forClient = cloneForClient(cached);
-            requestStatusById.put(cachedRequestId, forClient);
+            requestStatusById.put(cachedRequestId, cached);
             log.info("Cache hit for hash={}, maxLength={}, requestId={}", dto.getHash(), dto.getMaxLength(), cachedRequestId);
             return cachedRequestId;
         }
@@ -128,18 +127,7 @@ public class CrackHashService {
             log.info("Request [{}] queued (active={}/{}, queueSize={}/{})",
                     requestId, active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
         }
-
         return requestId;
-    }
-
-    private static CrackHashStatusResponseDto cloneForClient(CrackHashStatusResponseDto cached) {
-        if ("READY".equals(cached.getStatus()) && cached.getData() != null) {
-            return new CrackHashStatusResponseDto("READY", new ArrayList<>(cached.getData()));
-        }
-        if ("READY".equals(cached.getStatus())) {
-            return new CrackHashStatusResponseDto("READY", null);
-        }
-        return new CrackHashStatusResponseDto("ERROR", null);
     }
 
     private void startProcessing(CrackHashRequestInfo info) {
@@ -186,12 +174,6 @@ public class CrackHashService {
             }
             info = activeRequest;
         }
-
-        if (isWorkerWorkExpired(info)) {
-            forceExpire(info, "worker_response_after_ttl");
-            return;
-        }
-
         info.addAnswers(response.getAnswers());
         int completed = info.incrementCompletedParts();
         log.info("Request [{}] worker response: part {}/{}, answers={}, completedParts={}/{}",
@@ -204,63 +186,15 @@ public class CrackHashService {
         if (stored == null) {
             return new CrackHashStatusResponseDto("ERROR", null);
         }
-        if (!"IN_PROGRESS".equals(stored.getStatus())) {
-            return copyStatusDto(stored);
-        }
-
-        if (!isLiveInProgress(requestId)) {
-            CrackHashStatusResponseDto raced = requestStatusById.get(requestId);
-            if (raced != null && !"IN_PROGRESS".equals(raced.getStatus())) {
-                return copyStatusDto(raced);
-            }
-            return new CrackHashStatusResponseDto("ERROR", null);
-        }
-
-        CrackHashRequestInfo toExpire = null;
-        synchronized (schedulingLock) {
-            if (activeRequest != null && activeRequest.getRequestId().equals(requestId)
-                    && isWorkerWorkExpired(activeRequest)) {
-                toExpire = activeRequest;
-            }
-        }
-        if (toExpire != null) {
-            forceExpire(toExpire, "status_poll");
-        }
-
-        CrackHashStatusResponseDto after = requestStatusById.get(requestId);
-        return after != null ? copyStatusDto(after) : new CrackHashStatusResponseDto("ERROR", null);
-    }
-
-    /** Есть ли ещё активный или ожидающий в очереди запрос с данным id (для согласованности GET при IN_PROGRESS). */
-    private boolean isLiveInProgress(String requestId) {
-        synchronized (schedulingLock) {
-            if (activeRequest != null && activeRequest.getRequestId().equals(requestId)) {
-                return true;
-            }
-            for (PendingCrackRequest p : pendingQueue) {
-                if (p.getRequestId().equals(requestId)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private static CrackHashStatusResponseDto copyStatusDto(CrackHashStatusResponseDto dto) {
-        if (dto.getData() == null) {
-            return new CrackHashStatusResponseDto(dto.getStatus(), null);
-        }
-        return new CrackHashStatusResponseDto(dto.getStatus(), new ArrayList<>(dto.getData()));
+        return stored;
     }
 
     private void finishRequest(CrackHashRequestInfo info) {
         requestStatusById.put(info.getRequestId(), toClientDto(info));
-
         if (info.getStatus() == RequestStatus.READY) {
             cache.put(cacheKey(info.getHash(), info.getMaxLength()),
                     new CrackHashStatusResponseDto(info.getStatus().name(), copyAnswersList(info)));
         }
-
         CrackHashRequestInfo nextToStart = null;
         int active;
         int queueSize;
@@ -277,7 +211,7 @@ public class CrackHashService {
 
                 CrackHashStatusResponseDto cached = cache.get(cacheKey(pending.getHash(), pending.getMaxLength()));
                 if (cached != null && ("READY".equals(cached.getStatus()))) {
-                    requestStatusById.put(pending.getRequestId(), cloneForClient(cached));
+                    requestStatusById.put(pending.getRequestId(), cached);
                     log.info("Dequeued request [{}] served from cache, status=READY", pending.getRequestId());
                     continue;
                 }
