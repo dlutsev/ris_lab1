@@ -144,7 +144,7 @@ public class CrackHashService {
     private void startProcessing(CrackHashRequestInfo info) {
         log.info("Request [{}] starting processing, splitting into {} parts, workers={}",
                 info.getRequestId(), workerCount, workerBaseUrls);
-        for (int part = 1; part <= workerCount; part++) {
+        for (int part = 0; part < workerCount; part++) {
             int partNumber = part;
             executor.execute(() -> sendTaskToWorker(info, partNumber));
         }
@@ -163,14 +163,14 @@ public class CrackHashService {
         headers.setContentType(MediaType.APPLICATION_JSON);
         HttpEntity<WorkerTaskRequest> entity = new HttpEntity<>(taskRequest, headers);
 
-        String baseUrl = workerBaseUrls.get((partNumber-1) % workerBaseUrls.size());
+        String baseUrl = workerBaseUrls.get(partNumber % workerBaseUrls.size());
         String url = baseUrl + "/internal/api/worker/hash/crack/task";
-        log.info("Request [{}] sending part {}/{} to worker {}", info.getRequestId(), partNumber, info.getPartCount(), baseUrl);
+        log.info("Request [{}] sending part {}/{} to worker {}", info.getRequestId(), partNumber+1, info.getPartCount(), baseUrl);
 
         try {
             restTemplate.postForEntity(url, entity, Void.class);
         } catch (Exception ex) {
-            log.error("Request [{}] part {}/{} failed to send to {}: {}", info.getRequestId(), partNumber, info.getPartCount(), baseUrl, ex.getMessage());
+            log.error("Request [{}] part {}/{} failed to send to {}: {}", info.getRequestId(), partNumber+1, info.getPartCount(), baseUrl, ex.getMessage());
             info.incrementFailedParts();
             tryFinalizeIfDone(info);
         }
