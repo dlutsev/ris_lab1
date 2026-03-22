@@ -24,8 +24,9 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
 @Service
@@ -34,13 +35,15 @@ public class CrackHashService {
     private static final int MAX_CONCURRENT_REQUESTS = 1;
     private final RestTemplate restTemplate;
     private final Executor executor;
-    private final Map<String, CrackHashRequestInfo> requests = new ConcurrentHashMap<>();
+    private final Map<String, CrackHashRequestInfo> requests =
+            Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true));
     private final String alphabet;
     private final int workerCount;
     private final List<String> workerBaseUrls;
     private final long requestTtlMillis;
     private final int queueCapacity;
     private final int cacheCapacity;
+    private final int requestHistoryCapacity;
     private final Object schedulingLock = new Object();
     private int activeRequests = 0;
     private CrackHashRequestInfo activeRequest = null;
@@ -54,7 +57,8 @@ public class CrackHashService {
                             @Value("${crackhash.worker-base-urls}") String workerBaseUrls,
                             @Value("${crackhash.request-ttl-millis}") long requestTtlMillis,
                             @Value("${crackhash.queue-capacity:100}") int queueCapacity,
-                            @Value("${crackhash.cache-capacity:100}") int cacheCapacity) {
+                            @Value("${crackhash.cache-capacity:100}") int cacheCapacity,
+                            @Value("${crackhash.request-history-capacity:100}") int requestHistoryCapacity) {
         this.restTemplate = restTemplate;
         this.executor = workerTasksExecutor;
         this.alphabet = alphabet;
@@ -63,6 +67,7 @@ public class CrackHashService {
         this.requestTtlMillis = requestTtlMillis;
         this.queueCapacity = queueCapacity;
         this.cacheCapacity = cacheCapacity;
+        this.requestHistoryCapacity = Math.max(1, requestHistoryCapacity);
         this.cache = Collections.synchronizedMap(new LinkedHashMap<String, CrackHashStatusResponseDto>(16, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, CrackHashStatusResponseDto> eldest) {
@@ -90,7 +95,7 @@ public class CrackHashService {
             } else {
                 cachedInfo.setStatus(RequestStatus.ERROR);
             }
-            requests.put(cachedRequestId, cachedInfo);
+            putRequest(cachedRequestId, cachedInfo);
             log.info("Cache hit for hash={}, maxLength={}, requestId={}", dto.getHash(), dto.getMaxLength(), cachedRequestId);
             return cachedRequestId;
         }
@@ -102,7 +107,7 @@ public class CrackHashService {
                 dto.getMaxLength(),
                 workerCount
         );
-        requests.put(requestId, info);
+        putRequest(requestId, info);
 
         boolean shouldStartNow = false;
         int queueSize;
@@ -178,13 +183,13 @@ public class CrackHashService {
     }
 
     public void handleWorkerResponse(WorkerTaskResponse response) {
-        CrackHashRequestInfo info = requests.get(response.getRequestId());
+        CrackHashRequestInfo info = getRequest(response.getRequestId());
         if (info == null) {
             return;
         }
 
         if (isExpired(info)) {
-            info.setStatus(RequestStatus.ERROR);
+            forceExpire(info, "worker_response_after_ttl");
             return;
         }
 
@@ -196,7 +201,7 @@ public class CrackHashService {
     }
 
     public CrackHashStatusResponseDto getStatus(String requestId) {
-        CrackHashRequestInfo info = requests.get(requestId);
+        CrackHashRequestInfo info = getRequest(requestId);
         if (info == null) {
             return new CrackHashStatusResponseDto("ERROR", null);
         }
@@ -261,6 +266,7 @@ public class CrackHashService {
                     nextToStart.getRequestId(), active, MAX_CONCURRENT_REQUESTS, queueSize, queueCapacity);
             startProcessing(nextToStart);
         }
+        trimRequestHistory();
     }
 
     @Scheduled(fixedDelay = 1000)
@@ -311,6 +317,53 @@ public class CrackHashService {
 
     private String cacheKey(String hash, int maxLength) {
         return (hash != null ? hash.toLowerCase() : "null") + "|" + maxLength;
+    }
+
+    private void putRequest(String requestId, CrackHashRequestInfo info) {
+        synchronized (requests) {
+            requests.put(requestId, info);
+            trimRequestHistoryLocked();
+        }
+    }
+
+    private CrackHashRequestInfo getRequest(String requestId) {
+        synchronized (requests) {
+            return requests.get(requestId);
+        }
+    }
+
+    private void trimRequestHistory() {
+        synchronized (requests) {
+            trimRequestHistoryLocked();
+        }
+    }
+
+    private void trimRequestHistoryLocked() {
+        Set<String> protectedIds = new HashSet<>();
+        synchronized (schedulingLock) {
+            if (activeRequest != null) {
+                protectedIds.add(activeRequest.getRequestId());
+            }
+            for (CrackHashRequestInfo p : pendingQueue) {
+                protectedIds.add(p.getRequestId());
+            }
+        }
+        while (requests.size() > requestHistoryCapacity) {
+            String toRemove = null;
+            for (Map.Entry<String, CrackHashRequestInfo> e : requests.entrySet()) {
+                if (!protectedIds.contains(e.getKey())) {
+                    toRemove = e.getKey();
+                    break;
+                }
+            }
+            if (toRemove == null) {
+                log.warn("Request history size {} exceeds limit {} but only protected entries remain (active + queue)",
+                        requests.size(), requestHistoryCapacity);
+                break;
+            }
+            requests.remove(toRemove);
+            log.debug("Evicted request history entry {}", toRemove);
+        }
     }
 
     private void tryFinalizeIfDone(CrackHashRequestInfo info) {
