@@ -1,6 +1,0 @@
-server:
-  port: 8081
-
-crackhash:
-  manager-callback-url: http://localhost:8080/internal/api/manager/hash/crack/request
-
