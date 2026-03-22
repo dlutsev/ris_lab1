@@ -13,11 +13,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.Instant;
+import java.net.SocketTimeoutException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -40,7 +39,6 @@ public class CrackHashService {
     private final String alphabet;
     private final int workerCount;
     private final List<String> workerBaseUrls;
-    private final long requestTtlMillis;
     private final int queueCapacity;
     private final int cacheCapacity;
     private final Object schedulingLock = new Object();
@@ -54,7 +52,6 @@ public class CrackHashService {
                             @Value("${crackhash.alphabet:abcdefghijklmnopqrstuvwxyz0123456789}") String alphabet,
                             @Value("${crackhash.worker-count}") int workerCount,
                             @Value("${crackhash.worker-base-urls}") String workerBaseUrls,
-                            @Value("${crackhash.request-ttl-millis}") long requestTtlMillis,
                             @Value("${crackhash.queue-capacity:100}") int queueCapacity,
                             @Value("${crackhash.cache-capacity:100}") int cacheCapacity) {
         this.restTemplate = restTemplate;
@@ -62,7 +59,6 @@ public class CrackHashService {
         this.alphabet = alphabet;
         this.workerCount = workerCount;
         this.workerBaseUrls = parseWorkerBaseUrls(workerBaseUrls);
-        this.requestTtlMillis = requestTtlMillis;
         this.queueCapacity = queueCapacity;
         this.cacheCapacity = cacheCapacity;
         this.cache = Collections.synchronizedMap(new LinkedHashMap<String, CrackHashStatusResponseDto>(16, 0.75f, true) {
@@ -131,7 +127,6 @@ public class CrackHashService {
     }
 
     private void startProcessing(CrackHashRequestInfo info) {
-        info.markProcessingStarted();
         log.info("Request [{}] starting processing, splitting into {} parts, workers={}",
                 info.getRequestId(), workerCount, workerBaseUrls);
         for (int part = 0; part < workerCount; part++) {
@@ -161,8 +156,32 @@ public class CrackHashService {
             restTemplate.postForEntity(url, entity, Void.class);
         } catch (Exception ex) {
             log.error("Request [{}] part {}/{} failed to send to {}: {}", info.getRequestId(), partNumber + 1, info.getPartCount(), baseUrl, ex.getMessage());
+            synchronized (info) {
+                if (info.getStatus() != RequestStatus.IN_PROGRESS) {
+                    return;
+                }
+            }
+            if (ex.getCause() instanceof SocketTimeoutException && ex.getMessage().contains("Read timed out")) {
+                failEntireRequestAsError(info, "read_timeout (RestTemplate readTimeout = request-ttl-millis)");
+                return;
+            }
             info.incrementFailedParts();
             tryFinalizeIfDone(info);
+        }
+    }
+
+    private void failEntireRequestAsError(CrackHashRequestInfo info, String reason) {
+        boolean shouldFinish = false;
+        synchronized (info) {
+            if (info.getStatus() != RequestStatus.IN_PROGRESS) {
+                return;
+            }
+            info.setStatus(RequestStatus.ERROR);
+            shouldFinish = true;
+        }
+        log.warn("Request [{}] -> ERROR ({})", info.getRequestId(), reason);
+        if (shouldFinish) {
+            finishRequest(info);
         }
     }
 
@@ -173,6 +192,11 @@ public class CrackHashService {
                 return;
             }
             info = activeRequest;
+        }
+        synchronized (info) {
+            if (info.getStatus() != RequestStatus.IN_PROGRESS) {
+                return;
+            }
         }
         info.addAnswers(response.getAnswers());
         int completed = info.incrementCompletedParts();
@@ -253,26 +277,6 @@ public class CrackHashService {
         return new CrackHashStatusResponseDto("ERROR", null);
     }
 
-    @Scheduled(fixedDelay = 1000)
-    public void timeoutSweep() {
-        CrackHashRequestInfo active;
-        synchronized (schedulingLock) {
-            active = activeRequest;
-        }
-        if (active != null && active.getStatus() == RequestStatus.IN_PROGRESS && isWorkerWorkExpired(active)) {
-            forceExpire(active, "timeout_sweep");
-        }
-    }
-
-    private boolean isWorkerWorkExpired(CrackHashRequestInfo info) {
-        long started = info.getProcessingStartedAtMillis();
-        if (started <= 0) {
-            return false;
-        }
-        long now = Instant.now().toEpochMilli();
-        return now - started > requestTtlMillis;
-    }
-
     private List<String> parseWorkerBaseUrls(String value) {
         if (value == null || value.isEmpty()) {
             return Collections.emptyList();
@@ -314,21 +318,6 @@ public class CrackHashService {
             shouldFinish = true;
         }
 
-        if (shouldFinish) {
-            finishRequest(info);
-        }
-    }
-
-    private void forceExpire(CrackHashRequestInfo info, String source) {
-        boolean shouldFinish = false;
-        synchronized (info) {
-            if (info.getStatus() != RequestStatus.IN_PROGRESS) {
-                return;
-            }
-            info.setStatus(RequestStatus.ERROR);
-            shouldFinish = true;
-        }
-        log.warn("Request [{}] worker work expired by {} -> ERROR (finishing)", info.getRequestId(), source);
         if (shouldFinish) {
             finishRequest(info);
         }

@@ -1,6 +1,5 @@
 package com.lab1.crackhash.manager.model;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -11,7 +10,6 @@ public class CrackHashRequestInfo {
     private final String hash;
     private final int maxLength;
     private final int partCount;
-    private volatile long processingStartedAtMillis = 0;
     private final AtomicInteger completedParts = new AtomicInteger(0);
     private final AtomicInteger failedParts = new AtomicInteger(0);
     private final List<String> answers = Collections.synchronizedList(new ArrayList<>());
@@ -38,16 +36,6 @@ public class CrackHashRequestInfo {
 
     public int getPartCount() {
         return partCount;
-    }
-
-    public void markProcessingStarted() {
-        if (processingStartedAtMillis == 0) {
-            processingStartedAtMillis = Instant.now().toEpochMilli();
-        }
-    }
-
-    public long getProcessingStartedAtMillis() {
-        return processingStartedAtMillis;
     }
 
     public RequestStatus getStatus() {

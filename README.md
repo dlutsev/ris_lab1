@@ -45,7 +45,7 @@ docker compose up -d
 | `server.port` | Очевидно, что порт на каком поднимется сервис manager (по умолчанию 8080)       |
 | `crackhash.worker-count` | Число воркеров (2 по умолчанию)                                                 |
 | `crackhash.worker-base-urls` | Список URL воркеров через запятую (например `http://worker1:8080,http://worker2:8080`) |
-| `crackhash.request-ttl-millis` | Лимит времени **перебора на воркерах** (отсчёт с момента старта задач на worker, ожидание в очереди не входит); по истечении — `ERROR`, слот освобождается |
+| `crackhash.request-ttl-millis` | Таймаут **чтения** HTTP-ответа на `POST` к worker (`RestTemplate` readTimeout = это значение). Пока воркер считает в одном запросе, manager ждёт ответ не дольше этого времени; при read timeout — весь запрос `ERROR` (не PARTIAL). Отдельного планировщика TTL нет |
 | `crackhash.alphabet` | Алфавит для перебора (строка символов, по дефолту строчные английские буквы + цифры) |
 | `crackhash.queue-capacity` | Максимум запросов в очереди ожидания (когда активен уже один запрос)            |
 | `crackhash.cache-capacity` | Размер кэша по паре `(hash, maxLength)` для готовых результатов                 |
@@ -105,4 +105,4 @@ curl "http://localhost:8080/api/hash/status?requestId=<uuid>"
 
 - Очередь планировщика хранит только `PendingCrackRequest` (`requestId`, `hash`, `maxLength`); объект `CrackHashRequestInfo` (счётчики частей, ответы, TTL перебора) создаётся при фактическом старте задач на воркерах.
 - Кэш по `(hash, maxLength)` ограничен по размеру; при вытеснении из кэша новый запрос с тем же `hash`/`maxLength` снова пойдёт в перебор.
-- После таймаута перебора manager переводит запрос в `ERROR` и освобождает слот; задачи на worker при этом теоретически могут ещё выполняться — отдельный мониторинг не делается.
+- При read timeout на `POST` к worker запрос становится `ERROR` и освобождается слот; поздний `PATCH` от того же `requestId` игнорируется. Другие ошибки соединения (не read timeout) по-прежнему учитываются как «failed part» и могут дать `PARTIAL_RESULT`.
